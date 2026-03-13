@@ -1,6 +1,5 @@
-
-
 from pathlib import Path
+import argparse
 
 import numpy as np
 import pandas as pd
@@ -19,12 +18,15 @@ DATA_PATH = BASE_DIR / "data/processed/processed_data.csv"
 TARGET_COLUMN = "viral"
 TEXT_COLUMN = "text"
 RANDOM_STATE = 42
-BATCH_SIZE = 64
-EPOCHS = 10
-LEARNING_RATE = 1e-3
-HIDDEN_DIM = 128
-DROPOUT = 0.3
-BERT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+
+DEFAULT_BATCH_SIZE = 64
+DEFAULT_EPOCHS = 10
+DEFAULT_LEARNING_RATE = 1e-3
+DEFAULT_HIDDEN_DIM = 128
+DEFAULT_DROPOUT = 0.3
+DEFAULT_TEST_SIZE = 0.2
+DEFAULT_THRESHOLD = 0.5
+
 # Use CUDA on Colab if available
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", DEVICE)
@@ -55,6 +57,17 @@ CATEGORICAL_COLUMNS = [
     "traffic_source",
 ]
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train MLP for viral video prediction.")
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS)
+    parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
+    parser.add_argument("--hidden-dim", type=int, default=DEFAULT_HIDDEN_DIM)
+    parser.add_argument("--dropout", type=float, default=DEFAULT_DROPOUT)
+    parser.add_argument("--test-size", type=float, default=DEFAULT_TEST_SIZE)
+    parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
+    return parser.parse_args()
+
 
 class MLPClassifier(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int, dropout: float) -> None:
@@ -81,10 +94,10 @@ def load_data() -> pd.DataFrame:
 
 
 
-def split_data(df: pd.DataFrame):
+def split_data(df: pd.DataFrame, test_size: float):
     train_df, test_df = train_test_split(
         df,
-        test_size=0.2,
+        test_size=test_size,
         random_state=RANDOM_STATE,
         stratify=df[TARGET_COLUMN],
     )
@@ -154,12 +167,12 @@ def build_features(train_df: pd.DataFrame, test_df: pd.DataFrame):
 
 
 
-def create_dataloader(features: np.ndarray, labels: np.ndarray, shuffle: bool) -> DataLoader:
+def create_dataloader(features: np.ndarray, labels: np.ndarray, shuffle: bool, batch_size: int) -> DataLoader:
     dataset = TensorDataset(
         torch.tensor(features, dtype=torch.float32),
         torch.tensor(labels, dtype=torch.float32),
     )
-    return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=shuffle)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
 
 
 
@@ -187,26 +200,26 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: nn.Module):
 
 
 
-def train_model():
+def train_model(args):
     df = load_data()
-    train_df, test_df = split_data(df)
+    train_df, test_df = split_data(df, args.test_size)
 
     x_train, x_test, y_train, y_test = build_features(train_df, test_df)
 
-    train_loader = create_dataloader(x_train, y_train, shuffle=True)
-    test_loader = create_dataloader(x_test, y_test, shuffle=False)
+    train_loader = create_dataloader(x_train, y_train, shuffle=True, batch_size=args.batch_size)
+    test_loader = create_dataloader(x_test, y_test, shuffle=False, batch_size=args.batch_size)
 
     input_dim = x_train.shape[1]
-    model = MLPClassifier(input_dim=input_dim, hidden_dim=HIDDEN_DIM, dropout=DROPOUT).to(DEVICE)
+    model = MLPClassifier(input_dim=input_dim, hidden_dim=args.hidden_dim, dropout=args.dropout).to(DEVICE)
 
     positive_count = y_train.sum()
     negative_count = len(y_train) - positive_count
     pos_weight = torch.tensor([negative_count / positive_count], dtype=torch.float32).to(DEVICE)
 
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
-    for epoch in range(EPOCHS):
+    for epoch in range(args.epochs):
         model.train()
         total_train_loss = 0.0
 
@@ -225,12 +238,20 @@ def train_model():
         avg_train_loss = total_train_loss / len(train_loader.dataset)
 
         print(
-            f"Epoch {epoch + 1}/{EPOCHS} | "
+            f"Epoch {epoch + 1}/{args.epochs} | "
             f"Train Loss: {avg_train_loss:.4f}"
         )
 
     test_loss, test_probs, test_labels = evaluate(model, test_loader, criterion)
-    test_preds = (test_probs >= 0.5).astype(int)
+    test_preds = (test_probs >= args.threshold).astype(int)
+
+    print(f"\nBatch size: {args.batch_size}")
+    print(f"Epochs: {args.epochs}")
+    print(f"Learning rate: {args.learning_rate}")
+    print(f"Hidden dim: {args.hidden_dim}")
+    print(f"Dropout: {args.dropout}")
+    print(f"Test size: {args.test_size}")
+    print(f"Prediction threshold: {args.threshold}")
 
     print(f"\nTest Loss: {test_loss:.4f}")
     print(f"Test ROC-AUC: {roc_auc_score(test_labels, test_probs):.4f}")
@@ -239,4 +260,5 @@ def train_model():
 
 
 if __name__ == "__main__":
-    train_model()
+    args = parse_args()
+    train_model(args)
