@@ -26,6 +26,7 @@ DEFAULT_HIDDEN_DIM = 128
 DEFAULT_DROPOUT = 0.3
 DEFAULT_TEST_SIZE = 0.2
 DEFAULT_THRESHOLD = 0.5
+BERT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 # Use CUDA on Colab if available
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
