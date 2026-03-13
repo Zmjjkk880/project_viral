@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_PATH = BASE_DIR / "data/processed/processed_data.csv"
+DEFAULT_DATA_PATH = BASE_DIR / "data/processed/processed_data.csv"
 
 TARGET_COLUMN = "viral"
 TEXT_COLUMN = "text"
@@ -80,6 +80,7 @@ def parse_args():
     parser.add_argument("--dropout", type=float, default=DEFAULT_DROPOUT)
     parser.add_argument("--test-size", type=float, default=DEFAULT_TEST_SIZE)
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
+    parser.add_argument("--data-path", type=str, default=str(DEFAULT_DATA_PATH))
     return parser.parse_args()
 
 
@@ -98,8 +99,8 @@ class MLPClassifier(nn.Module):
 
 
 
-def load_data() -> pd.DataFrame:
-    df = pd.read_csv(DATA_PATH)
+def load_data(data_path: str) -> pd.DataFrame:
+    df = pd.read_csv(data_path)
     print(f"Dataset shape: {df.shape}")
     return df
 
@@ -214,7 +215,7 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: nn.Module):
 def train_model(args):
     set_seed(RANDOM_STATE)
 
-    df = load_data()
+    df = load_data(args.data_path)
     train_df, test_df = split_data(df, args.test_size)
 
     x_train, x_test, y_train, y_test = build_features(train_df, test_df)
@@ -268,6 +269,7 @@ def train_model(args):
     print(f"Dropout: {args.dropout}")
     print(f"Test size: {args.test_size}")
     print(f"Prediction threshold: {args.threshold}")
+    print(f"Data path: {args.data_path}")
 
     print(f"\nTest Loss: {test_loss:.4f}")
     print(f"Test ROC-AUC: {roc_auc_score(test_labels, test_probs):.4f}")

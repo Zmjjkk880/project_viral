@@ -1,4 +1,5 @@
 from pathlib import Path
+import argparse
 
 import pandas as pd
 
@@ -6,7 +7,7 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent
 
 RAW_DATA_PATH = BASE_DIR / "data/raw/youtube_shorts_tiktok_trends_2025.csv"
-PROCESSED_DATA_PATH = BASE_DIR / "data/processed/processed_data.csv"
+PROCESSED_DATA_DIR = BASE_DIR / "data/processed"
 
 
 TEXT_COLUMNS = ["title", "hashtag", "title_keywords", "tags"]
@@ -44,6 +45,13 @@ VIEWS_COLUMN = "views"
 ALL_REQUIRED_COLUMNS = TEXT_COLUMNS + CATEGORICAL_COLUMNS + NUMERIC_COLUMNS + [LEAKAGE_COLUMN, VIEWS_COLUMN]
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Preprocess viral video dataset.")
+    parser.add_argument("--views-threshold", type=int, default=100000)
+    parser.add_argument("--engagement-threshold", type=float, default=0.06)
+    return parser.parse_args()
+
+
 def validate_columns(df: pd.DataFrame) -> None:
     missing_columns = [col for col in ALL_REQUIRED_COLUMNS if col not in df.columns]
     if missing_columns:
@@ -67,18 +75,20 @@ def build_text_feature(df: pd.DataFrame) -> pd.Series:
     return text_feature.str.replace(r"\s+", " ", regex=True).str.strip()
 
 
-def create_viral_label(df: pd.DataFrame) -> pd.Series:
-    print("Using viral definition: views >= 100000 AND engagement_rate >= 0.10")
+def create_viral_label(df: pd.DataFrame, views_threshold: int, engagement_threshold: float) -> pd.Series:
+    print(
+        f"Using viral definition: views >= {views_threshold} AND engagement_rate >= {engagement_threshold:.2f}"
+    )
 
     viral = (
-        (df[VIEWS_COLUMN] >= 100000) &
-        (df[LEAKAGE_COLUMN] >= 0.10)
+        (df[VIEWS_COLUMN] >= views_threshold) &
+        (df[LEAKAGE_COLUMN] >= engagement_threshold)
     )
 
     return viral.astype(int)
 
 
-def preprocess_data() -> pd.DataFrame:
+def preprocess_data(views_threshold: int, engagement_threshold: float) -> pd.DataFrame:
     df = pd.read_csv(RAW_DATA_PATH)
     print(f"Raw data shape: {df.shape}")
 
@@ -87,7 +97,11 @@ def preprocess_data() -> pd.DataFrame:
     processed_df = df[TEXT_COLUMNS + CATEGORICAL_COLUMNS + NUMERIC_COLUMNS + [LEAKAGE_COLUMN, VIEWS_COLUMN]].copy()
 
     processed_df["text"] = build_text_feature(processed_df)
-    processed_df[TARGET_COLUMN] = create_viral_label(processed_df)
+    processed_df[TARGET_COLUMN] = create_viral_label(
+        processed_df,
+        views_threshold=views_threshold,
+        engagement_threshold=engagement_threshold,
+    )
 
     # Ensure categorical columns contain no missing values
     for col in CATEGORICAL_COLUMNS:
@@ -103,16 +117,29 @@ def preprocess_data() -> pd.DataFrame:
 
     processed_df = processed_df.drop(columns=TEXT_COLUMNS + [LEAKAGE_COLUMN, VIEWS_COLUMN])
 
-    PROCESSED_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
-    processed_df.to_csv(PROCESSED_DATA_PATH, index=False)
+    output_filename = f"processed_data_{views_threshold}_{engagement_threshold:.2f}.csv"
+    processed_data_path = PROCESSED_DATA_DIR / output_filename
+
+    PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    processed_df.to_csv(processed_data_path, index=False)
 
     print(f"Processed data shape: {processed_df.shape}")
-    print(f"Saved processed data to: {PROCESSED_DATA_PATH}")
+    print(f"Saved processed data to: {processed_data_path}")
+
+    label_distribution = processed_df[TARGET_COLUMN].value_counts(normalize=True).sort_index() * 100
+    non_viral_pct = label_distribution.get(0, 0.0)
+    viral_pct = label_distribution.get(1, 0.0)
+
     print("Viral label distribution:")
-    print(processed_df[TARGET_COLUMN].value_counts(normalize=True))
+    print(f"Class 0 (not viral): {non_viral_pct:.2f}%")
+    print(f"Class 1 (viral): {viral_pct:.2f}%")
 
     return processed_df
 
 
 if __name__ == "__main__":
-    preprocess_data()
+    args = parse_args()
+    preprocess_data(
+        views_threshold=args.views_threshold,
+        engagement_threshold=args.engagement_threshold,
+    )
