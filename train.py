@@ -253,9 +253,12 @@ def train_model(args):
 
         avg_train_loss = total_train_loss / len(train_loader.dataset)
 
+        test_loss, _, _ = evaluate(model, test_loader, criterion)
+
         print(
             f"Epoch {epoch + 1}/{args.epochs} | "
-            f"Train Loss: {avg_train_loss:.4f}"
+            f"Train Loss: {avg_train_loss:.4f} | "
+            f"Test Loss: {test_loss:.4f}"
         )
 
     test_loss, test_probs, test_labels = evaluate(model, test_loader, criterion)
