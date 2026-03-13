@@ -3,6 +3,7 @@ import argparse
 
 import numpy as np
 import pandas as pd
+import random
 import torch
 import torch.nn as nn
 from sentence_transformers import SentenceTransformer
@@ -18,6 +19,18 @@ DATA_PATH = BASE_DIR / "data/processed/processed_data.csv"
 TARGET_COLUMN = "viral"
 TEXT_COLUMN = "text"
 RANDOM_STATE = 42
+
+def set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 DEFAULT_BATCH_SIZE = 64
 DEFAULT_EPOCHS = 10
@@ -202,6 +215,8 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: nn.Module):
 
 
 def train_model(args):
+    set_seed(RANDOM_STATE)
+
     df = load_data()
     train_df, test_df = split_data(df, args.test_size)
 
