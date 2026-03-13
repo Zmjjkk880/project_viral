@@ -90,10 +90,7 @@ class MLPClassifier(nn.Module):
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1),
+            nn.Linear(hidden_dim, 1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
