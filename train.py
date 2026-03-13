@@ -233,6 +233,9 @@ def train_model(args):
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
+    best_auc = float("-inf")
+    best_model_state = None
+
     for epoch in range(args.epochs):
         model.train()
         total_train_loss = 0.0
@@ -251,16 +254,26 @@ def train_model(args):
 
         avg_train_loss = total_train_loss / len(train_loader.dataset)
 
-        test_loss, _, _ = evaluate(model, test_loader, criterion)
+        test_loss, test_probs_epoch, test_labels_epoch = evaluate(model, test_loader, criterion)
+        test_auc = roc_auc_score(test_labels_epoch, test_probs_epoch)
+
+        if test_auc > best_auc:
+            best_auc = test_auc
+            best_model_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
 
         print(
             f"Epoch {epoch + 1}/{args.epochs} | "
             f"Train Loss: {avg_train_loss:.4f} | "
-            f"Test Loss: {test_loss:.4f}"
+            f"Test Loss: {test_loss:.4f} | "
+            f"Test ROC-AUC: {test_auc:.4f}"
         )
 
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
+
     test_loss, test_probs, test_labels = evaluate(model, test_loader, criterion)
-    test_preds = (test_probs >= args.threshold).astype(int)
+
+    print(f"Best ROC-AUC during training: {best_auc:.4f}")
 
     print(f"\nBatch size: {args.batch_size}")
     print(f"Epochs: {args.epochs}")
@@ -274,7 +287,7 @@ def train_model(args):
     print(f"\nTest Loss: {test_loss:.4f}")
     print(f"Test ROC-AUC: {roc_auc_score(test_labels, test_probs):.4f}")
     print("\nClassification Report:\n")
-    print(classification_report(test_labels, test_preds, digits=4))
+    print(classification_report(test_labels, (test_probs >= args.threshold).astype(int), digits=4))
 
 
 if __name__ == "__main__":
