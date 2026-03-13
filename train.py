@@ -1,0 +1,242 @@
+
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from torch.utils.data import DataLoader, TensorDataset
+
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_PATH = BASE_DIR / "data/processed/processed_data.csv"
+
+TARGET_COLUMN = "viral"
+TEXT_COLUMN = "text"
+RANDOM_STATE = 42
+BATCH_SIZE = 64
+EPOCHS = 10
+LEARNING_RATE = 1e-3
+HIDDEN_DIM = 128
+DROPOUT = 0.3
+BERT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+# Use CUDA on Colab if available
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", DEVICE)
+
+NUMERIC_COLUMNS = [
+    "upload_hour",
+    "is_weekend",
+    "duration_sec",
+    "creator_avg_views",
+    "title_length",
+    "has_emoji",
+]
+
+CATEGORICAL_COLUMNS = [
+    "category",
+    "genre",
+    "sound_type",
+    "music_track",
+    "publish_dayofweek",
+    "publish_period",
+    "season",
+    "event_season",
+    "creator_tier",
+    "platform",
+    "country",
+    "region",
+    "language",
+    "traffic_source",
+]
+
+
+class MLPClassifier(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int, dropout: float) -> None:
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim // 2, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.network(x).squeeze(1)
+
+
+
+def load_data() -> pd.DataFrame:
+    df = pd.read_csv(DATA_PATH)
+    print(f"Dataset shape: {df.shape}")
+    return df
+
+
+
+def split_data(df: pd.DataFrame):
+    train_df, test_df = train_test_split(
+        df,
+        test_size=0.2,
+        random_state=RANDOM_STATE,
+        stratify=df[TARGET_COLUMN],
+    )
+
+    print(f"Train size: {len(train_df)}")
+    print(f"Test size: {len(test_df)}")
+
+    return train_df, test_df
+
+
+
+def prepare_tabular_features(train_df: pd.DataFrame, test_df: pd.DataFrame):
+    scaler = StandardScaler()
+
+    train_num = scaler.fit_transform(train_df[NUMERIC_COLUMNS])
+    test_num = scaler.transform(test_df[NUMERIC_COLUMNS])
+
+    train_cat = pd.get_dummies(train_df[CATEGORICAL_COLUMNS], drop_first=False)
+    test_cat = pd.get_dummies(test_df[CATEGORICAL_COLUMNS], drop_first=False)
+
+    test_cat = test_cat.reindex(columns=train_cat.columns, fill_value=0)
+
+    train_tab = np.hstack([train_num, train_cat.to_numpy(dtype=np.float32)])
+    test_tab = np.hstack([test_num, test_cat.to_numpy(dtype=np.float32)])
+
+    return train_tab, test_tab
+
+
+
+def encode_text(train_df: pd.DataFrame, test_df: pd.DataFrame):
+    encoder = SentenceTransformer(BERT_MODEL_NAME, device=str(DEVICE))
+
+    train_text = encoder.encode(
+        train_df[TEXT_COLUMN].tolist(),
+        batch_size=64,
+        show_progress_bar=True,
+        convert_to_numpy=True,
+        normalize_embeddings=False,
+    )
+
+    test_text = encoder.encode(
+        test_df[TEXT_COLUMN].tolist(),
+        batch_size=64,
+        show_progress_bar=True,
+        convert_to_numpy=True,
+        normalize_embeddings=False,
+    )
+
+    return train_text, test_text
+
+
+
+def build_features(train_df: pd.DataFrame, test_df: pd.DataFrame):
+    train_text, test_text = encode_text(train_df, test_df)
+    train_tab, test_tab = prepare_tabular_features(train_df, test_df)
+
+    x_train = np.hstack([train_text, train_tab]).astype(np.float32)
+    x_test = np.hstack([test_text, test_tab]).astype(np.float32)
+
+    y_train = train_df[TARGET_COLUMN].to_numpy(dtype=np.float32)
+    y_test = test_df[TARGET_COLUMN].to_numpy(dtype=np.float32)
+
+    print(f"Train feature shape: {x_train.shape}")
+    print(f"Test feature shape: {x_test.shape}")
+
+    return x_train, x_test, y_train, y_test
+
+
+
+def create_dataloader(features: np.ndarray, labels: np.ndarray, shuffle: bool) -> DataLoader:
+    dataset = TensorDataset(
+        torch.tensor(features, dtype=torch.float32),
+        torch.tensor(labels, dtype=torch.float32),
+    )
+    return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=shuffle)
+
+
+
+def evaluate(model: nn.Module, dataloader: DataLoader, criterion: nn.Module):
+    model.eval()
+    total_loss = 0.0
+    all_probs = []
+    all_labels = []
+
+    with torch.no_grad():
+        for batch_x, batch_y in dataloader:
+            batch_x = batch_x.to(DEVICE)
+            batch_y = batch_y.to(DEVICE)
+
+            logits = model(batch_x)
+            loss = criterion(logits, batch_y)
+            probs = torch.sigmoid(logits)
+
+            total_loss += loss.item() * batch_x.size(0)
+            all_probs.extend(probs.cpu().numpy())
+            all_labels.extend(batch_y.cpu().numpy())
+
+    avg_loss = total_loss / len(dataloader.dataset)
+    return avg_loss, np.array(all_probs), np.array(all_labels)
+
+
+
+def train_model():
+    df = load_data()
+    train_df, test_df = split_data(df)
+
+    x_train, x_test, y_train, y_test = build_features(train_df, test_df)
+
+    train_loader = create_dataloader(x_train, y_train, shuffle=True)
+    test_loader = create_dataloader(x_test, y_test, shuffle=False)
+
+    input_dim = x_train.shape[1]
+    model = MLPClassifier(input_dim=input_dim, hidden_dim=HIDDEN_DIM, dropout=DROPOUT).to(DEVICE)
+
+    positive_count = y_train.sum()
+    negative_count = len(y_train) - positive_count
+    pos_weight = torch.tensor([negative_count / positive_count], dtype=torch.float32).to(DEVICE)
+
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    for epoch in range(EPOCHS):
+        model.train()
+        total_train_loss = 0.0
+
+        for batch_x, batch_y in train_loader:
+            batch_x = batch_x.to(DEVICE)
+            batch_y = batch_y.to(DEVICE)
+
+            optimizer.zero_grad()
+            logits = model(batch_x)
+            loss = criterion(logits, batch_y)
+            loss.backward()
+            optimizer.step()
+
+            total_train_loss += loss.item() * batch_x.size(0)
+
+        avg_train_loss = total_train_loss / len(train_loader.dataset)
+
+        print(
+            f"Epoch {epoch + 1}/{EPOCHS} | "
+            f"Train Loss: {avg_train_loss:.4f}"
+        )
+
+    test_loss, test_probs, test_labels = evaluate(model, test_loader, criterion)
+    test_preds = (test_probs >= 0.5).astype(int)
+
+    print(f"\nTest Loss: {test_loss:.4f}")
+    print(f"Test ROC-AUC: {roc_auc_score(test_labels, test_probs):.4f}")
+    print("\nClassification Report:\n")
+    print(classification_report(test_labels, test_preds, digits=4))
+
+
+if __name__ == "__main__":
+    train_model()
