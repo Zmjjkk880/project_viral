@@ -211,7 +211,12 @@ class MLPClassifier(nn.Module):
             nn.Linear(self.token_mixer.output_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 1),
+
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+
+            nn.Linear(hidden_dim // 2, 1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
