@@ -9,6 +9,16 @@ We formulate this as a **binary classification task**:
 
 ---
 
+# Dataset
+
+We use a public dataset from Kaggle:
+
+https://www.kaggle.com/datasets/tarekmasryo/youtube-shorts-and-tiktok-trends-2025/data/code
+
+This dataset contains short video metadata (e.g., text descriptions, engagement metrics, and categorical attributes), which are used to construct features for viral prediction.
+
+---
+
 # How to Use This Repository
 
 Clone the repository:
@@ -185,4 +195,3 @@ Captures interactions between modalities
 - Text features use Sentence-BERT (`all-MiniLM-L6-v2`)
 - Numeric features are standardized
 - Categorical features are one-hot encoded
-
