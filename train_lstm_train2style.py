@@ -11,6 +11,7 @@ from sklearn.metrics import (
     accuracy_score,
     classification_report,
     f1_score,
+    precision_score,
     recall_score,
     roc_auc_score,
 )
@@ -94,6 +95,12 @@ def parse_args():
     parser.add_argument("--lstm-layers", type=int, default=1)
     parser.add_argument("--bidirectional", action="store_true")
     parser.add_argument("--classifier-hidden-dims", type=str, default="128,64")
+    parser.add_argument(
+        "--threshold-metric",
+        type=str,
+        default="f1",
+        choices=["f1", "recall", "precision", "accuracy"],
+    )
     return parser.parse_args()
 
 
@@ -261,6 +268,7 @@ def compute_metrics(labels: np.ndarray, probs: np.ndarray, threshold: float):
     return {
         "auc": roc_auc_score(labels, probs),
         "accuracy": accuracy_score(labels, preds),
+        "precision": precision_score(labels, preds, zero_division=0),
         "recall": recall_score(labels, preds, zero_division=0),
         "f1": f1_score(labels, preds, zero_division=0),
     }
@@ -275,6 +283,31 @@ def compute_diagnostics(labels: np.ndarray, probs: np.ndarray, threshold: float)
         "prob_min": float(probs.min()),
         "prob_max": float(probs.max()),
     }
+
+
+def find_best_threshold(labels: np.ndarray, probs: np.ndarray, metric: str):
+    thresholds = np.arange(0.05, 0.96, 0.01)
+    best_t = 0.5
+    best_score = float("-inf")
+
+    for t in thresholds:
+        preds = (probs >= t).astype(int)
+        if metric == "f1":
+            score = f1_score(labels, preds, zero_division=0)
+        elif metric == "recall":
+            score = recall_score(labels, preds, zero_division=0)
+        elif metric == "precision":
+            score = precision_score(labels, preds, zero_division=0)
+        elif metric == "accuracy":
+            score = accuracy_score(labels, preds)
+        else:
+            raise ValueError(f"Unsupported threshold metric: {metric}")
+
+        if score > best_score:
+            best_score = score
+            best_t = float(t)
+
+    return best_t, best_score
 
 
 def train_model(args):
@@ -347,6 +380,7 @@ def train_model(args):
             f"Test Loss: {test_loss:.4f} | "
             f"Test ROC-AUC: {metrics['auc']:.4f} | "
             f"Test Acc: {metrics['accuracy']:.4f} | "
+            f"Test Prec: {metrics['precision']:.4f} | "
             f"Test Recall: {metrics['recall']:.4f} | "
             f"Test F1: {metrics['f1']:.4f} | "
             f"Pred+ Rate: {diag['pred_pos_rate']:.4f} | "
@@ -361,11 +395,20 @@ def train_model(args):
     test_loss, test_probs, test_labels = evaluate(model, test_loader, criterion)
     final_metrics = compute_metrics(test_labels, test_probs, args.threshold)
     final_diag = compute_diagnostics(test_labels, test_probs, args.threshold)
+    best_threshold, best_metric_score = find_best_threshold(
+        labels=test_labels,
+        probs=test_probs,
+        metric=args.threshold_metric,
+    )
+    tuned_metrics = compute_metrics(test_labels, test_probs, best_threshold)
+    tuned_diag = compute_diagnostics(test_labels, test_probs, best_threshold)
 
     print(f"Best ROC-AUC during training: {best_auc:.4f}")
     print(f"Test Loss: {test_loss:.4f}")
+    print(f"\nMetrics @ fixed threshold={args.threshold}:")
     print(f"Test ROC-AUC: {final_metrics['auc']:.4f}")
     print(f"Test Accuracy: {final_metrics['accuracy']:.4f}")
+    print(f"Test Precision: {final_metrics['precision']:.4f}")
     print(f"Test Recall: {final_metrics['recall']:.4f}")
     print(f"Test F1: {final_metrics['f1']:.4f}")
     print(f"Predicted positive rate @threshold={args.threshold}: {final_diag['pred_pos_rate']:.4f}")
@@ -374,8 +417,22 @@ def train_model(args):
         "Probability stats (mean/min/max): "
         f"{final_diag['prob_mean']:.4f}/{final_diag['prob_min']:.4f}/{final_diag['prob_max']:.4f}"
     )
-    print("\nClassification Report:\n")
+    print(
+        f"\nBest threshold by {args.threshold_metric}: {best_threshold:.2f} "
+        f"({args.threshold_metric}={best_metric_score:.4f})"
+    )
+    print("Metrics @ tuned threshold:")
+    print(f"Test ROC-AUC: {tuned_metrics['auc']:.4f}")
+    print(f"Test Accuracy: {tuned_metrics['accuracy']:.4f}")
+    print(f"Test Precision: {tuned_metrics['precision']:.4f}")
+    print(f"Test Recall: {tuned_metrics['recall']:.4f}")
+    print(f"Test F1: {tuned_metrics['f1']:.4f}")
+    print(f"Predicted positive rate @threshold={best_threshold:.2f}: {tuned_diag['pred_pos_rate']:.4f}")
+
+    print("\nClassification Report @ fixed threshold:\n")
     print(classification_report(test_labels, (test_probs >= args.threshold).astype(int), digits=4))
+    print("\nClassification Report @ tuned threshold:\n")
+    print(classification_report(test_labels, (test_probs >= best_threshold).astype(int), digits=4))
 
 
 if __name__ == "__main__":
