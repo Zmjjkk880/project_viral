@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -23,6 +22,7 @@ from torch.utils.data import DataLoader, TensorDataset
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_PATH = BASE_DIR / "data/processed/processed_data.csv"
 os.environ.setdefault("HF_HOME", str(BASE_DIR / ".hf_cache"))
+from sentence_transformers import SentenceTransformer
 
 TARGET_COLUMN = "viral"
 TEXT_COLUMN = "text"
@@ -266,6 +266,17 @@ def compute_metrics(labels: np.ndarray, probs: np.ndarray, threshold: float):
     }
 
 
+def compute_diagnostics(labels: np.ndarray, probs: np.ndarray, threshold: float):
+    preds = (probs >= threshold).astype(int)
+    return {
+        "pred_pos_rate": float(preds.mean()),
+        "label_pos_rate": float(labels.mean()),
+        "prob_mean": float(probs.mean()),
+        "prob_min": float(probs.min()),
+        "prob_max": float(probs.max()),
+    }
+
+
 def train_model(args):
     set_seed(RANDOM_STATE)
     print("Using device:", DEVICE)
@@ -324,6 +335,7 @@ def train_model(args):
         train_loss = total_train_loss / len(train_loader.dataset)
         test_loss, test_probs, test_labels = evaluate(model, test_loader, criterion)
         metrics = compute_metrics(test_labels, test_probs, args.threshold)
+        diag = compute_diagnostics(test_labels, test_probs, args.threshold)
 
         if metrics["auc"] > best_auc:
             best_auc = metrics["auc"]
@@ -336,7 +348,10 @@ def train_model(args):
             f"Test ROC-AUC: {metrics['auc']:.4f} | "
             f"Test Acc: {metrics['accuracy']:.4f} | "
             f"Test Recall: {metrics['recall']:.4f} | "
-            f"Test F1: {metrics['f1']:.4f}",
+            f"Test F1: {metrics['f1']:.4f} | "
+            f"Pred+ Rate: {diag['pred_pos_rate']:.4f} | "
+            f"Label+ Rate: {diag['label_pos_rate']:.4f} | "
+            f"Prob Mean/Min/Max: {diag['prob_mean']:.4f}/{diag['prob_min']:.4f}/{diag['prob_max']:.4f}",
             flush=True,
         )
 
@@ -345,6 +360,7 @@ def train_model(args):
 
     test_loss, test_probs, test_labels = evaluate(model, test_loader, criterion)
     final_metrics = compute_metrics(test_labels, test_probs, args.threshold)
+    final_diag = compute_diagnostics(test_labels, test_probs, args.threshold)
 
     print(f"Best ROC-AUC during training: {best_auc:.4f}")
     print(f"Test Loss: {test_loss:.4f}")
@@ -352,6 +368,12 @@ def train_model(args):
     print(f"Test Accuracy: {final_metrics['accuracy']:.4f}")
     print(f"Test Recall: {final_metrics['recall']:.4f}")
     print(f"Test F1: {final_metrics['f1']:.4f}")
+    print(f"Predicted positive rate @threshold={args.threshold}: {final_diag['pred_pos_rate']:.4f}")
+    print(f"Label positive rate: {final_diag['label_pos_rate']:.4f}")
+    print(
+        "Probability stats (mean/min/max): "
+        f"{final_diag['prob_mean']:.4f}/{final_diag['prob_min']:.4f}/{final_diag['prob_max']:.4f}"
+    )
     print("\nClassification Report:\n")
     print(classification_report(test_labels, (test_probs >= args.threshold).astype(int), digits=4))
 
