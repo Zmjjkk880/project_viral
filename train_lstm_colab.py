@@ -7,7 +7,13 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    f1_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, Dataset
@@ -386,6 +392,16 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: nn.Module):
     return avg_loss, np.array(all_probs), np.array(all_labels)
 
 
+def compute_binary_metrics(labels: np.ndarray, probs: np.ndarray, threshold: float):
+    preds = (probs >= threshold).astype(int)
+    return {
+        "auc": roc_auc_score(labels, probs),
+        "accuracy": accuracy_score(labels, preds),
+        "recall": recall_score(labels, preds, zero_division=0),
+        "f1": f1_score(labels, preds, zero_division=0),
+    }
+
+
 def train_model(args):
     set_seed(RANDOM_STATE)
     print("Using device:", DEVICE)
@@ -450,7 +466,12 @@ def train_model(args):
 
         avg_train_loss = total_train_loss / len(train_loader.dataset)
         test_loss, test_probs_epoch, test_labels_epoch = evaluate(model, test_loader, criterion)
-        test_auc = roc_auc_score(test_labels_epoch, test_probs_epoch)
+        test_metrics = compute_binary_metrics(
+            labels=test_labels_epoch,
+            probs=test_probs_epoch,
+            threshold=args.threshold,
+        )
+        test_auc = test_metrics["auc"]
 
         if test_auc > best_auc:
             best_auc = test_auc
@@ -460,17 +481,29 @@ def train_model(args):
             f"Epoch {epoch + 1}/{args.epochs} | "
             f"Train Loss: {avg_train_loss:.4f} | "
             f"Test Loss: {test_loss:.4f} | "
-            f"Test ROC-AUC: {test_auc:.4f}"
+            f"Test ROC-AUC: {test_metrics['auc']:.4f} | "
+            f"Test Acc: {test_metrics['accuracy']:.4f} | "
+            f"Test Recall: {test_metrics['recall']:.4f} | "
+            f"Test F1: {test_metrics['f1']:.4f}",
+            flush=True,
         )
 
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
 
     test_loss, test_probs, test_labels = evaluate(model, test_loader, criterion)
+    final_metrics = compute_binary_metrics(
+        labels=test_labels,
+        probs=test_probs,
+        threshold=args.threshold,
+    )
 
     print(f"Best ROC-AUC during training: {best_auc:.4f}")
     print(f"Test Loss: {test_loss:.4f}")
-    print(f"Test ROC-AUC: {roc_auc_score(test_labels, test_probs):.4f}")
+    print(f"Test ROC-AUC: {final_metrics['auc']:.4f}")
+    print(f"Test Accuracy: {final_metrics['accuracy']:.4f}")
+    print(f"Test Recall: {final_metrics['recall']:.4f}")
+    print(f"Test F1: {final_metrics['f1']:.4f}")
     print("\nClassification Report:\n")
     print(classification_report(test_labels, (test_probs >= args.threshold).astype(int), digits=4))
 
