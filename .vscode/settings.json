@@ -1,3 +1,15 @@
 ﻿{
-  "python.defaultInterpreterPath": "C:\\Users\\陈·嘉瑾\\.conda\\envs\\deeplearn_course\\python.exe"
+  "python.defaultInterpreterPath": "${env:USERPROFILE}\\.conda\\envs\\deeplearn_course\\python.exe",
+  "python.terminal.activateEnvironment": true,
+  "python.envFile": "${workspaceFolder}/.env",
+  "terminal.integrated.profiles.windows": {
+    "Cmd (project_viral)": {
+      "path": "C:\\Windows\\System32\\cmd.exe",
+      "args": [
+        "/K",
+        "doskey python=%USERPROFILE%\\.conda\\envs\\deeplearn_course\\python.exe $* & doskey pip=%USERPROFILE%\\.conda\\envs\\deeplearn_course\\python.exe -m pip $*"
+      ]
+    }
+  },
+  "terminal.integrated.defaultProfile.windows": "Cmd (project_viral)"
 }
