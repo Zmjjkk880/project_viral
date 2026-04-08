@@ -85,7 +85,7 @@ def parse_args():
         "--token-mixer",
         type=str,
         default="raw_concat",
-        choices=["raw_concat", "projected_concat", "weighted_sum", "attention_pool"],
+        choices=["text_only", "raw_concat", "projected_concat", "weighted_sum", "attention_pool"],
     )
     parser.add_argument("--proj-dim", type=int, default=64)
     parser.add_argument(
@@ -113,7 +113,9 @@ class TokenMixer(nn.Module):
         self.token_mixer = token_mixer
         self.proj_dim = proj_dim
 
-        if token_mixer == "raw_concat":
+        if token_mixer == "text_only":
+            self.output_dim = text_dim
+        elif token_mixer == "raw_concat":
             self.output_dim = text_dim + tab_dim
         elif token_mixer == "projected_concat":
             self.text_proj = nn.Sequential(
@@ -165,6 +167,9 @@ class TokenMixer(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_text = x[:, : self.text_dim]
         x_tab = x[:, self.text_dim :]
+
+        if self.token_mixer == "text_only":
+            return x_text
 
         if self.token_mixer == "raw_concat":
             return torch.cat([x_text, x_tab], dim=1)
@@ -444,7 +449,7 @@ def train_model(args):
     )
     tab_dim = x_train.shape[1] - text_dim
 
-    token_mixers = ["raw_concat", "projected_concat", "weighted_sum", "attention_pool"]
+    token_mixers = ["text_only", "raw_concat", "projected_concat", "weighted_sum", "attention_pool"]
     results = {}
 
     for token_mixer in token_mixers:
@@ -462,7 +467,8 @@ def train_model(args):
 
     comparison_df = pd.DataFrame(
         {
-            "true_label": results["raw_concat"]["labels"].astype(int),
+            "true_label": results["text_only"]["labels"].astype(int),
+            "text_only_prob": results["text_only"]["probs"],
             "raw_concat_prob": results["raw_concat"]["probs"],
             "projected_concat_prob": results["projected_concat"]["probs"],
             "weighted_sum_prob": results["weighted_sum"]["probs"],
@@ -487,6 +493,10 @@ def train_model(args):
 
     print("\n===== Pairwise Prediction Differences =====")
     pairs = [
+        ("text_only", "raw_concat"),
+        ("text_only", "projected_concat"),
+        ("text_only", "weighted_sum"),
+        ("text_only", "attention_pool"),
         ("raw_concat", "projected_concat"),
         ("raw_concat", "weighted_sum"),
         ("raw_concat", "attention_pool"),
@@ -509,7 +519,7 @@ def train_model(args):
     pred_matrix = np.column_stack([results[token_mixer]["preds"] for token_mixer in token_mixers])
     all_preds_same_count = np.all(pred_matrix == pred_matrix[:, [0]], axis=1).sum()
     print("\n===== Global Agreement =====")
-    print(f"Samples with identical predicted labels across all 4 models: {all_preds_same_count}/{len(pred_matrix)}")
+    print(f"Samples with identical predicted labels across all 5 models: {all_preds_same_count}/{len(pred_matrix)}")
 
     print("\n===== Near-Threshold Counts =====")
     for token_mixer in token_mixers:
