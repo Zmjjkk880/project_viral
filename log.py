@@ -97,6 +97,7 @@ def parse_args():
 
 
 
+
 # TokenMixer module for fusion logic
 class TokenMixer(nn.Module):
     def __init__(
@@ -178,17 +179,6 @@ class TokenMixer(nn.Module):
 
         if self.token_mixer == "raw_concat":
             return torch.cat([x_text, x_tab], dim=1)
-    def get_weighted_sum_weights(self, x: torch.Tensor):
-        if self.token_mixer != "weighted_sum":
-            return None
-
-        x_text = x[:, : self.text_dim]
-        x_tab = x[:, self.text_dim :]
-        e_text = self.text_proj(x_text)
-        e_tab = self.tab_proj(x_tab)
-        gates = torch.cat([self.text_gate(e_text), self.tab_gate(e_tab)], dim=1)
-        weights = torch.softmax(gates, dim=1)
-        return weights
 
         if self.token_mixer == "projected_concat":
             e_text = self.text_proj(x_text)
@@ -212,6 +202,18 @@ class TokenMixer(nn.Module):
             return attn_out.mean(dim=1)
 
         raise ValueError(f"Unsupported token_mixer: {self.token_mixer}")
+
+    def get_weighted_sum_weights(self, x: torch.Tensor):
+        if self.token_mixer != "weighted_sum":
+            return None
+
+        x_text = x[:, : self.text_dim]
+        x_tab = x[:, self.text_dim :]
+        e_text = self.text_proj(x_text)
+        e_tab = self.tab_proj(x_tab)
+        gates = torch.cat([self.text_gate(e_text), self.tab_gate(e_tab)], dim=1)
+        weights = torch.softmax(gates, dim=1)
+        return weights
 
 
 # Classifier using TokenMixer for fusion
