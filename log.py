@@ -242,21 +242,22 @@ class MLPClassifier(nn.Module):
         )
         self.classifier = nn.Sequential(
             nn.Linear(self.token_mixer.output_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
-            
-            
+            nn.Dropout(0.2),
 
             nn.Linear(hidden_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
-            
+            nn.Dropout(0.2),
 
             nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.BatchNorm1d(hidden_dim // 2),
             nn.ReLU(),
-            
+            nn.Dropout(0.1),
 
             nn.Linear(hidden_dim // 2, hidden_dim // 4),
             nn.ReLU(),
-            
 
             nn.Linear(hidden_dim // 4, 1),
         )
