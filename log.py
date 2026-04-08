@@ -93,6 +93,11 @@ def parse_args():
         type=str,
         default=str(BASE_DIR / "comparison_outputs" / "model_probabilities.csv"),
     )
+    parser.add_argument(
+        "--compare-all",
+        action="store_true",
+        help="Train and compare all token mixers. If not set, only the token mixer specified by --token-mixer is trained.",
+    )
     return parser.parse_args()
 
 
@@ -484,7 +489,8 @@ def train_model(args):
     )
     tab_dim = x_train.shape[1] - text_dim
 
-    token_mixers = ["text_only", "tabular_only", "raw_concat", "projected_concat", "weighted_sum", "attention_pool"]
+    all_token_mixers = ["text_only", "tabular_only", "raw_concat", "projected_concat", "weighted_sum", "attention_pool"]
+    token_mixers = all_token_mixers if args.compare_all else [args.token_mixer]
     results = {}
 
     for token_mixer in token_mixers:
@@ -500,76 +506,92 @@ def train_model(args):
             args=args,
         )
 
-    comparison_df = pd.DataFrame(
-        {
-            "true_label": results["text_only"]["labels"].astype(int),
-            "text_only_prob": results["text_only"]["probs"],
-            "tabular_only_prob": results["tabular_only"]["probs"],
-            "raw_concat_prob": results["raw_concat"]["probs"],
-            "projected_concat_prob": results["projected_concat"]["probs"],
-            "weighted_sum_prob": results["weighted_sum"]["probs"],
-            "attention_pool_prob": results["attention_pool"]["probs"],
-        }
-    )
-
-    output_path = Path(args.output_csv)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    comparison_df.to_csv(output_path, index=False)
-
-    print("\n===== Saved probability comparison CSV =====")
-    print(f"Output path: {output_path}")
-
-    print("\n===== Summary Metrics =====")
-    for token_mixer in token_mixers:
-        print(
-            f"{token_mixer}: "
-            f"loss={results[token_mixer]['test_loss']:.4f}, "
-            f"auc={results[token_mixer]['test_auc']:.4f}"
+    if args.compare_all:
+        comparison_df = pd.DataFrame(
+            {
+                "true_label": results["text_only"]["labels"].astype(int),
+                "text_only_prob": results["text_only"]["probs"],
+                "tabular_only_prob": results["tabular_only"]["probs"],
+                "raw_concat_prob": results["raw_concat"]["probs"],
+                "projected_concat_prob": results["projected_concat"]["probs"],
+                "weighted_sum_prob": results["weighted_sum"]["probs"],
+                "attention_pool_prob": results["attention_pool"]["probs"],
+            }
         )
 
-    print("\n===== Pairwise Prediction Differences =====")
-    pairs = [
-        ("text_only", "tabular_only"),
-        ("text_only", "raw_concat"),
-        ("text_only", "projected_concat"),
-        ("text_only", "weighted_sum"),
-        ("text_only", "attention_pool"),
-        ("tabular_only", "raw_concat"),
-        ("tabular_only", "projected_concat"),
-        ("tabular_only", "weighted_sum"),
-        ("tabular_only", "attention_pool"),
-        ("raw_concat", "projected_concat"),
-        ("raw_concat", "weighted_sum"),
-        ("raw_concat", "attention_pool"),
-        ("projected_concat", "weighted_sum"),
-        ("projected_concat", "attention_pool"),
-        ("weighted_sum", "attention_pool"),
-    ]
+        output_path = Path(args.output_csv)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        comparison_df.to_csv(output_path, index=False)
 
-    for left, right in pairs:
-        pred_diff_count = (results[left]["preds"] != results[right]["preds"]).sum()
-        mean_abs_prob_diff = np.abs(results[left]["probs"] - results[right]["probs"]).mean()
-        max_abs_prob_diff = np.abs(results[left]["probs"] - results[right]["probs"]).max()
-        print(
-            f"{left} vs {right}: "
-            f"different_preds={pred_diff_count}, "
-            f"mean_abs_prob_diff={mean_abs_prob_diff:.6f}, "
-            f"max_abs_prob_diff={max_abs_prob_diff:.6f}"
-        )
+        print("\n===== Saved probability comparison CSV =====")
+        print(f"Output path: {output_path}")
 
-    pred_matrix = np.column_stack([results[token_mixer]["preds"] for token_mixer in token_mixers])
-    all_preds_same_count = np.all(pred_matrix == pred_matrix[:, [0]], axis=1).sum()
-    print("\n===== Global Agreement =====")
-    print(f"Samples with identical predicted labels across all 6 models: {all_preds_same_count}/{len(pred_matrix)}")
+        print("\n===== Summary Metrics =====")
+        for token_mixer in token_mixers:
+            print(
+                f"{token_mixer}: "
+                f"loss={results[token_mixer]['test_loss']:.4f}, "
+                f"auc={results[token_mixer]['test_auc']:.4f}"
+            )
 
-    print("\n===== Near-Threshold Counts =====")
-    for token_mixer in token_mixers:
-        probs = results[token_mixer]["probs"]
-        near_threshold_count = ((probs > args.threshold - 0.05) & (probs < args.threshold + 0.05)).sum()
-        print(
-            f"{token_mixer}: "
-            f"samples in [{args.threshold - 0.05:.2f}, {args.threshold + 0.05:.2f}] = {near_threshold_count}"
-        )
+        print("\n===== Pairwise Prediction Differences =====")
+        pairs = [
+            ("text_only", "tabular_only"),
+            ("text_only", "raw_concat"),
+            ("text_only", "projected_concat"),
+            ("text_only", "weighted_sum"),
+            ("text_only", "attention_pool"),
+            ("tabular_only", "raw_concat"),
+            ("tabular_only", "projected_concat"),
+            ("tabular_only", "weighted_sum"),
+            ("tabular_only", "attention_pool"),
+            ("raw_concat", "projected_concat"),
+            ("raw_concat", "weighted_sum"),
+            ("raw_concat", "attention_pool"),
+            ("projected_concat", "weighted_sum"),
+            ("projected_concat", "attention_pool"),
+            ("weighted_sum", "attention_pool"),
+        ]
+
+        for left, right in pairs:
+            pred_diff_count = (results[left]["preds"] != results[right]["preds"]).sum()
+            mean_abs_prob_diff = np.abs(results[left]["probs"] - results[right]["probs"]).mean()
+            max_abs_prob_diff = np.abs(results[left]["probs"] - results[right]["probs"]).max()
+            print(
+                f"{left} vs {right}: "
+                f"different_preds={pred_diff_count}, "
+                f"mean_abs_prob_diff={mean_abs_prob_diff:.6f}, "
+                f"max_abs_prob_diff={max_abs_prob_diff:.6f}"
+            )
+
+        pred_matrix = np.column_stack([results[token_mixer]["preds"] for token_mixer in token_mixers])
+        all_preds_same_count = np.all(pred_matrix == pred_matrix[:, [0]], axis=1).sum()
+        print("\n===== Global Agreement =====")
+        print(f"Samples with identical predicted labels across all 6 models: {all_preds_same_count}/{len(pred_matrix)}")
+
+        print("\n===== Near-Threshold Counts =====")
+        for token_mixer in token_mixers:
+            probs = results[token_mixer]["probs"]
+            near_threshold_count = ((probs > args.threshold - 0.05) & (probs < args.threshold + 0.05)).sum()
+            print(
+                f"{token_mixer}: "
+                f"samples in [{args.threshold - 0.05:.2f}, {args.threshold + 0.05:.2f}] = {near_threshold_count}"
+            )
+    else:
+        token_mixer = args.token_mixer
+        print("\n===== Single Model Summary =====")
+        print(f"Token mixer: {token_mixer}")
+        print(f"Batch size: {args.batch_size}")
+        print(f"Epochs: {args.epochs}")
+        print(f"Learning rate: {args.learning_rate}")
+        print(f"Hidden dim: {args.hidden_dim}")
+        print(f"Dropout: {args.dropout}")
+        print(f"Test size: {args.test_size}")
+        print(f"Prediction threshold: {args.threshold}")
+        print(f"Data path: {args.data_path}")
+        print(f"Projection dim: {args.proj_dim}")
+        print(f"Test Loss: {results[token_mixer]['test_loss']:.4f}")
+        print(f"Test ROC-AUC: {results[token_mixer]['test_auc']:.4f}")
 
 
 if __name__ == "__main__":
