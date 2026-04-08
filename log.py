@@ -7,7 +7,7 @@ import random
 import torch
 import torch.nn as nn
 from sentence_transformers import SentenceTransformer
-from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.metrics import accuracy_score, classification_report, f1_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
@@ -454,10 +454,14 @@ def train_single_model(
     test_loss, test_probs, test_labels, test_weights = evaluate(model, test_loader, criterion)
     test_preds = (test_probs >= args.threshold).astype(int)
     test_auc = roc_auc_score(test_labels, test_probs)
+    test_accuracy = accuracy_score(test_labels, test_preds)
+    test_macro_f1 = f1_score(test_labels, test_preds, average="macro")
 
     print(f"Best ROC-AUC during training ({token_mixer}): {best_auc:.4f}")
     print(f"Final Test Loss ({token_mixer}): {test_loss:.4f}")
     print(f"Final Test ROC-AUC ({token_mixer}): {test_auc:.4f}")
+    print(f"Final Accuracy ({token_mixer}): {test_accuracy:.4f}")
+    print(f"Final Macro F1 ({token_mixer}): {test_macro_f1:.4f}")
     if test_weights is not None:
         avg_text_weight = test_weights[:, 0].mean()
         avg_tab_weight = test_weights[:, 1].mean()
@@ -470,6 +474,8 @@ def train_single_model(
         "token_mixer": token_mixer,
         "test_loss": test_loss,
         "test_auc": test_auc,
+        "test_accuracy": test_accuracy,
+        "test_macro_f1": test_macro_f1,
         "probs": test_probs,
         "preds": test_preds,
         "labels": test_labels,
@@ -531,7 +537,9 @@ def train_model(args):
             print(
                 f"{token_mixer}: "
                 f"loss={results[token_mixer]['test_loss']:.4f}, "
-                f"auc={results[token_mixer]['test_auc']:.4f}"
+                f"auc={results[token_mixer]['test_auc']:.4f}, "
+                f"accuracy={results[token_mixer]['test_accuracy']:.4f}, "
+                f"macro_f1={results[token_mixer]['test_macro_f1']:.4f}"
             )
 
         print("\n===== Pairwise Prediction Differences =====")
@@ -592,6 +600,8 @@ def train_model(args):
         print(f"Projection dim: {args.proj_dim}")
         print(f"Test Loss: {results[token_mixer]['test_loss']:.4f}")
         print(f"Test ROC-AUC: {results[token_mixer]['test_auc']:.4f}")
+        print(f"Accuracy: {results[token_mixer]['test_accuracy']:.4f}")
+        print(f"Macro F1: {results[token_mixer]['test_macro_f1']:.4f}")
 
 
 if __name__ == "__main__":
