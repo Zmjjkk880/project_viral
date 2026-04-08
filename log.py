@@ -85,7 +85,7 @@ def parse_args():
         "--token-mixer",
         type=str,
         default="raw_concat",
-        choices=["text_only", "raw_concat", "projected_concat", "weighted_sum", "attention_pool"],
+        choices=["text_only", "tabular_only", "raw_concat", "projected_concat", "weighted_sum", "attention_pool"],
     )
     parser.add_argument("--proj-dim", type=int, default=64)
     parser.add_argument(
@@ -115,6 +115,8 @@ class TokenMixer(nn.Module):
 
         if token_mixer == "text_only":
             self.output_dim = text_dim
+        elif token_mixer == "tabular_only":
+            self.output_dim = tab_dim
         elif token_mixer == "raw_concat":
             self.output_dim = text_dim + tab_dim
         elif token_mixer == "projected_concat":
@@ -171,8 +173,22 @@ class TokenMixer(nn.Module):
         if self.token_mixer == "text_only":
             return x_text
 
+        if self.token_mixer == "tabular_only":
+            return x_tab
+
         if self.token_mixer == "raw_concat":
             return torch.cat([x_text, x_tab], dim=1)
+    def get_weighted_sum_weights(self, x: torch.Tensor):
+        if self.token_mixer != "weighted_sum":
+            return None
+
+        x_text = x[:, : self.text_dim]
+        x_tab = x[:, self.text_dim :]
+        e_text = self.text_proj(x_text)
+        e_tab = self.tab_proj(x_tab)
+        gates = torch.cat([self.text_gate(e_text), self.tab_gate(e_tab)], dim=1)
+        weights = torch.softmax(gates, dim=1)
+        return weights
 
         if self.token_mixer == "projected_concat":
             e_text = self.text_proj(x_text)
@@ -329,6 +345,7 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: nn.Module):
     total_loss = 0.0
     all_probs = []
     all_labels = []
+    all_weights = []
 
     with torch.no_grad():
         for batch_x, batch_y in dataloader:
@@ -343,8 +360,16 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: nn.Module):
             all_probs.extend(probs.cpu().numpy())
             all_labels.extend(batch_y.cpu().numpy())
 
+            mixer_weights = model.token_mixer.get_weighted_sum_weights(batch_x)
+            if mixer_weights is not None:
+                all_weights.append(mixer_weights.cpu().numpy())
+
     avg_loss = total_loss / len(dataloader.dataset)
-    return avg_loss, np.array(all_probs), np.array(all_labels)
+    weight_array = None
+    if all_weights:
+        weight_array = np.vstack(all_weights)
+
+    return avg_loss, np.array(all_probs), np.array(all_labels), weight_array
 
 
 
@@ -400,7 +425,7 @@ def train_single_model(
             total_train_loss += loss.item() * batch_x.size(0)
 
         avg_train_loss = total_train_loss / len(train_loader.dataset)
-        test_loss, test_probs_epoch, test_labels_epoch = evaluate(model, test_loader, criterion)
+        test_loss, test_probs_epoch, test_labels_epoch, _ = evaluate(model, test_loader, criterion)
         test_auc = roc_auc_score(test_labels_epoch, test_probs_epoch)
 
         if test_auc > best_auc:
@@ -419,13 +444,20 @@ def train_single_model(
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
 
-    test_loss, test_probs, test_labels = evaluate(model, test_loader, criterion)
+    test_loss, test_probs, test_labels, test_weights = evaluate(model, test_loader, criterion)
     test_preds = (test_probs >= args.threshold).astype(int)
     test_auc = roc_auc_score(test_labels, test_probs)
 
     print(f"Best ROC-AUC during training ({token_mixer}): {best_auc:.4f}")
     print(f"Final Test Loss ({token_mixer}): {test_loss:.4f}")
     print(f"Final Test ROC-AUC ({token_mixer}): {test_auc:.4f}")
+    if test_weights is not None:
+        avg_text_weight = test_weights[:, 0].mean()
+        avg_tab_weight = test_weights[:, 1].mean()
+        print(
+            f"Average weighted_sum weights ({token_mixer}): "
+            f"text={avg_text_weight:.6f}, tabular={avg_tab_weight:.6f}"
+        )
 
     return {
         "token_mixer": token_mixer,
@@ -434,6 +466,7 @@ def train_single_model(
         "probs": test_probs,
         "preds": test_preds,
         "labels": test_labels,
+        "weights": test_weights,
     }
 
 
@@ -449,7 +482,7 @@ def train_model(args):
     )
     tab_dim = x_train.shape[1] - text_dim
 
-    token_mixers = ["text_only", "raw_concat", "projected_concat", "weighted_sum", "attention_pool"]
+    token_mixers = ["text_only", "tabular_only", "raw_concat", "projected_concat", "weighted_sum", "attention_pool"]
     results = {}
 
     for token_mixer in token_mixers:
@@ -469,6 +502,7 @@ def train_model(args):
         {
             "true_label": results["text_only"]["labels"].astype(int),
             "text_only_prob": results["text_only"]["probs"],
+            "tabular_only_prob": results["tabular_only"]["probs"],
             "raw_concat_prob": results["raw_concat"]["probs"],
             "projected_concat_prob": results["projected_concat"]["probs"],
             "weighted_sum_prob": results["weighted_sum"]["probs"],
@@ -493,10 +527,15 @@ def train_model(args):
 
     print("\n===== Pairwise Prediction Differences =====")
     pairs = [
+        ("text_only", "tabular_only"),
         ("text_only", "raw_concat"),
         ("text_only", "projected_concat"),
         ("text_only", "weighted_sum"),
         ("text_only", "attention_pool"),
+        ("tabular_only", "raw_concat"),
+        ("tabular_only", "projected_concat"),
+        ("tabular_only", "weighted_sum"),
+        ("tabular_only", "attention_pool"),
         ("raw_concat", "projected_concat"),
         ("raw_concat", "weighted_sum"),
         ("raw_concat", "attention_pool"),
@@ -519,7 +558,7 @@ def train_model(args):
     pred_matrix = np.column_stack([results[token_mixer]["preds"] for token_mixer in token_mixers])
     all_preds_same_count = np.all(pred_matrix == pred_matrix[:, [0]], axis=1).sum()
     print("\n===== Global Agreement =====")
-    print(f"Samples with identical predicted labels across all 5 models: {all_preds_same_count}/{len(pred_matrix)}")
+    print(f"Samples with identical predicted labels across all 6 models: {all_preds_same_count}/{len(pred_matrix)}")
 
     print("\n===== Near-Threshold Counts =====")
     for token_mixer in token_mixers:
