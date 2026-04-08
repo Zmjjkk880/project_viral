@@ -243,13 +243,24 @@ class MLPClassifier(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(self.token_mixer.output_dim, hidden_dim),
             nn.ReLU(),
+            nn.BatchNorm1d(hidden_dim),
+            nn.Dropout(dropout),
+
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.BatchNorm1d(hidden_dim),
             nn.Dropout(dropout),
 
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
+            nn.BatchNorm1d(hidden_dim // 2),
             nn.Dropout(dropout),
 
-            nn.Linear(hidden_dim // 2, 1),
+            nn.Linear(hidden_dim // 2, hidden_dim // 4),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+
+            nn.Linear(hidden_dim // 4, 1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
