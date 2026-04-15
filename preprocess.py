@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+import unicodedata
 
 import pandas as pd
 
@@ -44,6 +45,21 @@ VIEWS_COLUMN = "views"
 
 ALL_REQUIRED_COLUMNS = TEXT_COLUMNS + CATEGORICAL_COLUMNS + NUMERIC_COLUMNS + [LEAKAGE_COLUMN, VIEWS_COLUMN]
 
+UNICODE_TEXT_REPLACEMENTS = {
+    "\u2014": " - ",
+    "\u2013": " - ",
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u00a0": " ",
+    "\u200b": " ",
+    "\u200c": " ",
+    "\u200d": " ",
+    "\ufeff": " ",
+    "\ufe0f": "",
+}
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Preprocess viral video dataset.")
@@ -58,9 +74,27 @@ def validate_columns(df: pd.DataFrame) -> None:
         raise ValueError(f"Missing required columns: {missing_columns}")
 
 
+def clean_text_value(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text)
+
+    for src, dst in UNICODE_TEXT_REPLACEMENTS.items():
+        text = text.replace(src, dst)
+
+    cleaned_chars = []
+    for ch in text:
+        category = unicodedata.category(ch)
+        if category == "Cf":
+            continue
+        if category in {"So", "Sk"}:
+            continue
+        cleaned_chars.append(ch)
+
+    return "".join(cleaned_chars)
+
+
 def build_text_feature(df: pd.DataFrame) -> pd.Series:
     for col in TEXT_COLUMNS:
-        df[col] = df[col].fillna("").astype(str)
+        df[col] = df[col].fillna("").astype(str).map(clean_text_value)
 
     text_feature = (
         "[TITLE] "
@@ -121,7 +155,7 @@ def preprocess_data(views_threshold: int, engagement_threshold: float) -> pd.Dat
     processed_data_path = PROCESSED_DATA_DIR / output_filename
 
     PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    processed_df.to_csv(processed_data_path, index=False)
+    processed_df.to_csv(processed_data_path, index=False, encoding="utf-8-sig")
 
     print(f"Processed data shape: {processed_df.shape}")
     print(f"Saved processed data to: {processed_data_path}")
