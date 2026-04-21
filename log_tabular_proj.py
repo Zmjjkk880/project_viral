@@ -13,6 +13,17 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_PATH = BASE_DIR / "data/processed/processed_data.csv"
 TOKEN_MIXER_NAME = "tabular_projected_only"
 
+# Re-export shared data / preprocessing utilities so the Colab notebook can
+# treat this module like log.py for feature preparation and seed control.
+RANDOM_STATE = base_log.RANDOM_STATE
+NUMERIC_COLUMNS = base_log.NUMERIC_COLUMNS
+CATEGORICAL_COLUMNS = base_log.CATEGORICAL_COLUMNS
+DEVICE = base_log.DEVICE
+set_seed = base_log.set_seed
+load_data = base_log.load_data
+split_data = base_log.split_data
+build_features = base_log.build_features
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
